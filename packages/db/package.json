@@ -21,18 +21,19 @@
     "build": "prisma generate",
     "dev": "prisma generate",
     "lint": "echo 'No lint for db package' && exit 0",
+    "typecheck": "echo 'No typecheck for db package (generated client)' && exit 0",
     "test": "echo 'No tests for db package' && exit 0",
     "clean": "rm -rf node_modules/.prisma"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0"
+    "@prisma/client": "^5.22.0",
+    "prisma": "^5.22.0"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "devDependencies": {
     "@flowiq/config": "workspace:*",
-    "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

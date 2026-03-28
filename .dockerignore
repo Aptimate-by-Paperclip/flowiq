@@ -1,0 +1,15 @@
+**/.git
+**/.next
+**/node_modules
+**/.turbo
+**/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/coverage
+**/out
+infra/
+.github/
+**/.env*
+!**/.env.example

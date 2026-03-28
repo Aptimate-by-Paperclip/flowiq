@@ -15,6 +15,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
     "test": "echo 'No tests for types package' && exit 0",
     "clean": "rm -rf dist"
   },
