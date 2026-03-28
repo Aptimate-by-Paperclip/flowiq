@@ -1,4 +1,4 @@
-name: Deploy to Staging
+name: Deploy to Staging (Vercel)
 
 on:
   push:
@@ -7,11 +7,6 @@ on:
 concurrency:
   group: deploy-staging
   cancel-in-progress: false   # never cancel an in-flight deploy
-
-env:
-  AWS_REGION: ap-southeast-2
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-southeast-2.amazonaws.com
-  ECS_CLUSTER: flowiq-staging
 
 jobs:
   # ── CI gate ────────────────────────────────────────────────────────────────
@@ -46,255 +41,53 @@ jobs:
       - run: ruff check .
       - run: pytest
 
-  # ── Build & push Docker images ─────────────────────────────────────────────
-  build-and-push:
-    name: Build & Push Images
+  # ── Deploy web to Vercel ────────────────────────────────────────────────────
+  deploy-web:
+    name: Deploy Web to Vercel
     runs-on: ubuntu-latest
     needs: [ci-node, ci-python]
-    outputs:
-      api-image: ${{ steps.meta-api.outputs.image }}
-      web-image: ${{ steps.meta-web.outputs.image }}
-      ai-image: ${{ steps.meta-ai.outputs.image }}
-    permissions:
-      id-token: write   # required for OIDC
-      contents: read
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # ── api ────────────────────────────────────────────────────────────────
-      - name: Build & push api
-        id: meta-api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/api/Dockerfile
-          push: true
-          tags: ${{ env.ECR_REGISTRY }}/flowiq/api:${{ github.sha }},${{ env.ECR_REGISTRY }}/flowiq/api:latest
-          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/flowiq/api:cache
-          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/flowiq/api:cache,mode=max
-
-      - name: Output api image
-        run: echo "image=${{ env.ECR_REGISTRY }}/flowiq/api:${{ github.sha }}" >> $GITHUB_OUTPUT
-        id: set-api-image
-
-      # ── web ────────────────────────────────────────────────────────────────
-      - name: Build & push web
-        id: meta-web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/web/Dockerfile
-          push: true
-          tags: ${{ env.ECR_REGISTRY }}/flowiq/web:${{ github.sha }},${{ env.ECR_REGISTRY }}/flowiq/web:latest
-          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/flowiq/web:cache
-          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/flowiq/web:cache,mode=max
-
-      - name: Output web image
-        run: echo "image=${{ env.ECR_REGISTRY }}/flowiq/web:${{ github.sha }}" >> $GITHUB_OUTPUT
-        id: set-web-image
-
-      # ── ai-service ─────────────────────────────────────────────────────────
-      - name: Build & push ai-service
-        id: meta-ai
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/ai-service/Dockerfile
-          push: true
-          tags: ${{ env.ECR_REGISTRY }}/flowiq/ai-service:${{ github.sha }},${{ env.ECR_REGISTRY }}/flowiq/ai-service:latest
-          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/flowiq/ai-service:cache
-          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/flowiq/ai-service:cache,mode=max
-
-      - name: Output ai-service image
-        run: echo "image=${{ env.ECR_REGISTRY }}/flowiq/ai-service:${{ github.sha }}" >> $GITHUB_OUTPUT
-        id: set-ai-image
-
-  # ── Run Prisma migrations ──────────────────────────────────────────────────
-  migrate:
-    name: Run DB Migrations
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Run prisma migrate deploy (one-off ECS task)
-        run: |
-          TASK_DEF=$(aws ecs describe-task-definition \
-            --task-definition flowiq-staging-api \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster "$ECS_CLUSTER" \
-            --task-definition "$TASK_DEF" \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.STAGING_PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.STAGING_ECS_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
-            --overrides '{"containerOverrides":[{"name":"api","command":["node","-e","require(\"child_process\").execSync(\"npx prisma migrate deploy\",{stdio:\"inherit\",cwd:\"/app\"})"],"environment":[{"name":"MIGRATE_ONLY","value":"true"}]}]}' \
-            --query 'tasks[0].taskArn' --output text)
-
-          echo "Migration task: $TASK_ARN"
-          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
-
-          EXIT_CODE=$(aws ecs describe-tasks \
-            --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)
-
-          echo "Migration exit code: $EXIT_CODE"
-          [ "$EXIT_CODE" = "0" ] || exit 1
-
-  # ── Deploy ECS services ────────────────────────────────────────────────────
-  deploy:
-    name: Deploy ECS Services
-    runs-on: ubuntu-latest
-    needs: migrate
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # ── api ────────────────────────────────────────────────────────────────
-      - name: Download current api task definition
-        run: |
-          aws ecs describe-task-definition --task-definition flowiq-staging-api \
-            --query taskDefinition > /tmp/api-task-def.json
-
-      - name: Update api task definition with new image
-        id: render-api
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: /tmp/api-task-def.json
-          container-name: api
-          image: ${{ env.ECR_REGISTRY }}/flowiq/api:${{ github.sha }}
-
-      - name: Deploy api service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-api.outputs.task-definition }}
-          service: flowiq-staging-api
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-      # ── web ────────────────────────────────────────────────────────────────
-      - name: Download current web task definition
-        run: |
-          aws ecs describe-task-definition --task-definition flowiq-staging-web \
-            --query taskDefinition > /tmp/web-task-def.json
-
-      - name: Update web task definition with new image
-        id: render-web
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: /tmp/web-task-def.json
-          container-name: web
-          image: ${{ env.ECR_REGISTRY }}/flowiq/web:${{ github.sha }}
-
-      - name: Deploy web service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-web.outputs.task-definition }}
-          service: flowiq-staging-web
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-      # ── ai-service ─────────────────────────────────────────────────────────
-      - name: Download current ai-service task definition
-        run: |
-          aws ecs describe-task-definition --task-definition flowiq-staging-ai-service \
-            --query taskDefinition > /tmp/ai-task-def.json
-
-      - name: Update ai-service task definition with new image
-        id: render-ai
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: /tmp/ai-task-def.json
-          container-name: ai-service
-          image: ${{ env.ECR_REGISTRY }}/flowiq/ai-service:${{ github.sha }}
-
-      - name: Deploy ai-service service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-ai.outputs.task-definition }}
-          service: flowiq-staging-ai-service
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-  # ── Post deployment summary ────────────────────────────────────────────────
-  notify:
-    name: Deployment Summary
-    runs-on: ubuntu-latest
-    needs: deploy
-    if: always()
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Post PR comment with deployment summary
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy to Vercel Production
+        run: vercel deploy --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Post deployment summary
         uses: actions/github-script@v7
+        if: always()
         with:
           script: |
             const sha = context.sha;
             const shortSha = sha.substring(0, 7);
-            const status = '${{ needs.deploy.result }}' === 'success' ? '✅' : '❌';
-            const deployStatus = '${{ needs.deploy.result }}';
-            const region = process.env.AWS_REGION || 'ap-southeast-2';
-
-            // Find the PR associated with this merge commit
+            const status = '${{ job.status }}' === 'success' ? '✅' : '❌';
             const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner: context.repo.owner,
               repo: context.repo.repo,
               commit_sha: sha,
             });
-
-            if (prs.data.length === 0) {
-              console.log('No PR found for this commit — skipping comment');
-              return;
-            }
-
+            if (prs.data.length === 0) return;
             const pr = prs.data[0];
             const body = [
-              `## ${status} Staging Deployment`,
+              `## ${status} Staging Deployment (Vercel)`,
               '',
               `**Commit:** [\`${shortSha}\`](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/commit/${sha})`,
-              `**Status:** ${deployStatus}`,
-              `**Cluster:** \`flowiq-staging\` (${region})`,
-              '',
-              '| Service | Image |',
-              '|---------|-------|',
-              `| api | \`flowiq/api:${shortSha}\` |`,
-              `| web | \`flowiq/web:${shortSha}\` |`,
-              `| ai-service | \`flowiq/ai-service:${shortSha}\` |`,
+              `**Status:** ${{ job.status }}`,
+              `**Platform:** Vercel`,
+              `**URL:** https://flowiq-web-caudellhenrys-projects.vercel.app`,
               '',
               `[View run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
             ].join('\n');
-
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
