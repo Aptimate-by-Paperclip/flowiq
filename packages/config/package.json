@@ -5,5 +5,10 @@
   "exports": {
     "./eslint": "./eslint.js",
     "./typescript": "./tsconfig.json"
+  },
+  "dependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.57.2",
+    "@typescript-eslint/parser": "^8.57.2",
+    "eslint": "^8.57.1"
   }
 }
