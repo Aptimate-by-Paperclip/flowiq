@@ -1,0 +1,127 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum DocumentStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum WorkflowStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  plan      Plan     @default(FREE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  documents  Document[]
+  workflows  Workflow[]
+  auditLogs  AuditLog[]
+
+  @@map("companies")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  companyId String
+  clerkId   String   @unique
+  role      UserRole @default(MEMBER)
+  email     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company           Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdDocuments  Document[] @relation("DocumentCreatedBy")
+  auditLogs         AuditLog[]
+
+  @@unique([companyId, email])
+  @@index([companyId])
+  @@index([clerkId])
+  @@map("users")
+}
+
+model Document {
+  id          String         @id @default(cuid())
+  companyId   String
+  title       String
+  status      DocumentStatus @default(DRAFT)
+  metadata    Json           @default("{}")
+  createdById String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy  User       @relation("DocumentCreatedBy", fields: [createdById], references: [id])
+  workflows  Workflow[]
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@map("documents")
+}
+
+model Workflow {
+  id         String         @id @default(cuid())
+  companyId  String
+  documentId String
+  steps      Json           @default("[]")
+  status     WorkflowStatus @default(PENDING)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([documentId])
+  @@map("workflows")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  companyId    String
+  userId       String
+  action       String
+  resourceType String
+  resourceId   String
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, resourceType, resourceId])
+  @@index([userId])
+  @@map("audit_logs")
+}

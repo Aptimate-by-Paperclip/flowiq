@@ -1,0 +1,39 @@
+{
+  "name": "@flowiq/db",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset",
+    "build": "prisma generate",
+    "dev": "prisma generate",
+    "lint": "echo 'No lint for db package' && exit 0",
+    "test": "echo 'No tests for db package' && exit 0",
+    "clean": "rm -rf node_modules/.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@flowiq/config": "workspace:*",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

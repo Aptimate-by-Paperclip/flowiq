@@ -1,0 +1,9 @@
+{
+  "extends": "@flowiq/config/tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src", "prisma/seed.ts"],
+  "exclude": ["node_modules", "dist"]
+}
