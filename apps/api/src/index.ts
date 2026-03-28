@@ -4,6 +4,8 @@ import helmet from "@fastify/helmet";
 import envPlugin from "@fastify/env";
 import { envSchema } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
+import { clerkWebhookRoutes } from "./routes/webhooks/clerk.js";
+import authPlugin from "./plugins/auth.js";
 
 const app = Fastify({
   logger: {
@@ -28,8 +30,12 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
+  // Register Clerk auth plugin (decorates request.auth, request.currentUser, etc.)
+  await app.register(authPlugin);
+
   // Register routes
   await app.register(healthRoutes);
+  await app.register(clerkWebhookRoutes);
 
   // Start server
   const host = process.env.HOST ?? "0.0.0.0";

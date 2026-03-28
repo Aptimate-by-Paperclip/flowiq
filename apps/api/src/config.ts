@@ -1,8 +1,6 @@
-import { Type } from "@sinclair/typebox";
-
 export const envSchema = {
   type: "object",
-  required: ["PORT", "DATABASE_URL"],
+  required: ["PORT", "DATABASE_URL", "CLERK_SECRET_KEY"],
   properties: {
     NODE_ENV: {
       type: "string",
@@ -25,6 +23,9 @@ export const envSchema = {
     },
     CLERK_SECRET_KEY: {
       type: "string",
+    },
+    CLERK_WEBHOOK_SECRET: {
+      type: "string",
       default: "",
     },
     CORS_ORIGIN: {
@@ -43,6 +44,7 @@ declare module "fastify" {
       DATABASE_URL: string;
       REDIS_URL: string;
       CLERK_SECRET_KEY: string;
+      CLERK_WEBHOOK_SECRET: string;
       CORS_ORIGIN: string;
     };
   }

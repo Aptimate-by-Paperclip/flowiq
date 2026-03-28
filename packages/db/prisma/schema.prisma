@@ -38,11 +38,12 @@ enum WorkflowStatus {
 }
 
 model Company {
-  id        String   @id @default(cuid())
-  name      String
-  plan      Plan     @default(FREE)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  name        String
+  plan        Plan     @default(FREE)
+  clerkOrgId  String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   users      User[]
   documents  Document[]
