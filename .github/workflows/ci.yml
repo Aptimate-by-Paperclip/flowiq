@@ -35,8 +35,11 @@ jobs:
       - name: Test
         run: pnpm turbo run test --filter=!@flowiq/ai-service
 
-      - name: Build
-        run: pnpm turbo run build --filter=!@flowiq/ai-service
+      # Build api and non-Next.js packages. @flowiq/web's next build requires
+      # NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY at build time, so it is built as part
+      # of the Docker image during deploy (where real secrets are available).
+      - name: Build (api + shared packages)
+        run: pnpm turbo run build --filter=!@flowiq/ai-service --filter=!@flowiq/web
 
   # ── Python: lint + test ────────────────────────────────────────────────────
   python:
