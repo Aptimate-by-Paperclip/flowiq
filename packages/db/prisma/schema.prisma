@@ -6,8 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // DATABASE_URL_UNPOOLED is the direct (non-pooled) connection used by Prisma Migrate.
+  // Vercel Postgres sets both automatically; for local dev, set it to the same value as DATABASE_URL.
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 enum Plan {

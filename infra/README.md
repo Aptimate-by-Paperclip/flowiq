@@ -1,8 +1,56 @@
 # FlowIQ Infrastructure
 
-Terraform configuration for the FlowIQ AWS infrastructure.
+> **Architecture change (2026-03-28):** FlowIQ staging has moved from AWS ECS + RDS + ElastiCache + S3 to
+> **Vercel-managed services**. The Terraform modules in `infra/` are archived and no longer used.
+> See [Vercel managed services](#vercel-managed-services-staging) below for the current setup.
 
-## Structure
+---
+
+## Vercel managed services (staging)
+
+All staging infrastructure is now provisioned through the [Vercel dashboard](https://vercel.com/caudellhenrys-projects/flowiq-web).
+
+| Service | Provider | Status | Env vars set |
+|---------|----------|--------|--------------|
+| **Blob storage** | Vercel Blob | ✅ Provisioned (`flowiq-documents-staging`) | `BLOB_READ_WRITE_TOKEN` |
+| **Postgres** | Vercel Postgres (Neon) | ⏳ Needs dashboard provisioning | `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `POSTGRES_*` |
+| **KV / Redis** | Vercel KV (Upstash) | ⏳ Needs dashboard provisioning | `KV_URL`, `KV_REST_API_URL`, `KV_REST_API_TOKEN` |
+
+### Provisioning Vercel Postgres
+
+1. Go to **Vercel Dashboard → Storage → Create Database → Postgres**
+2. Name: `flowiq-staging-db`, Region: `iad1` (Washington DC)
+3. Connect to the `flowiq-web` project (Production + Preview environments)
+4. Vercel auto-sets: `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `POSTGRES_URL`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+
+After linking, run migrations:
+
+```bash
+cd packages/db
+pnpm db:migrate
+```
+
+### Provisioning Vercel KV
+
+1. Go to **Vercel Dashboard → Storage → Create Database → KV**
+2. Name: `flowiq-staging-kv`, Region: `iad1`
+3. Connect to the `flowiq-web` project (Production + Preview environments)
+4. Vercel auto-sets: `KV_URL`, `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_REST_API_READ_ONLY_TOKEN`
+
+### Blob storage
+
+Already provisioned. Store ID: `store_q61ZHR2tEe27FYqQ`. Connected to `flowiq-web` on Production + Preview.
+`BLOB_READ_WRITE_TOKEN` is set on the project.
+
+---
+
+## Archived: AWS Terraform (no longer used)
+
+The Terraform modules below were written for an ECS-based architecture that was superseded before deployment.
+They are kept for reference only. **Do not apply this Terraform against any AWS account without board approval.**
+
+<details>
+<summary>Terraform module structure (archived)</summary>
 
 ```
 infra/
@@ -18,122 +66,4 @@ infra/
     └── staging/      # Staging environment wiring
 ```
 
-## Prerequisites
-
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.6
-- AWS credentials configured (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` or IAM role)
-- An ACM certificate ARN for the staging domain (or use a self-signed cert — see below)
-
-## Staging deploy
-
-```bash
-cd infra/environments/staging
-
-# 1. Export secrets
-export TF_VAR_db_password="<strong-password>"
-export TF_VAR_acm_certificate_arn="arn:aws:acm:ap-southeast-2:ACCOUNT_ID:certificate/..."
-
-# 2. Init (downloads providers)
-terraform init
-
-# 3. Review the plan
-terraform plan -out=staging.tfplan
-
-# 4. Apply
-terraform apply staging.tfplan
-```
-
-### ACM certificate
-
-If you don't have a domain yet, request a certificate in ACM (us-east-1 for CloudFront, ap-southeast-2 for ALB) and validate it via DNS. Alternatively, create a self-signed cert and import it:
-
-```bash
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout staging.key -out staging.crt \
-  -subj "/CN=staging.flowiq.internal"
-
-aws acm import-certificate \
-  --certificate fileb://staging.crt \
-  --private-key fileb://staging.key \
-  --region ap-southeast-2
-```
-
-## Outputs
-
-After `terraform apply`, the following outputs are available:
-
-| Output | Description |
-|--------|-------------|
-| `alb_dns_name` | ALB DNS — point your staging domain CNAME here |
-| `rds_endpoint` | RDS PostgreSQL host:port |
-| `redis_endpoint` | ElastiCache Redis host |
-| `s3_documents_bucket` | S3 bucket name for document uploads |
-| `ecr_repository_urls` | ECR repository URLs per service |
-| `github_actions_deploy_role_arn` | IAM role for GitHub Actions OIDC |
-
-Retrieve them anytime:
-
-```bash
-terraform output
-```
-
-## GitHub Actions OIDC setup
-
-The IAM module creates a deploy role that GitHub Actions assumes via OIDC (no long-lived keys). After `apply`:
-
-1. Copy the `github_actions_deploy_role_arn` output.
-2. Add it as a GitHub Actions secret: `AWS_DEPLOY_ROLE_ARN`.
-3. The CI/CD workflow (`/.github/workflows/deploy.yml`) uses this role automatically.
-
-You may need to first create the OIDC provider in IAM if it doesn't exist:
-
-```bash
-aws iam create-open-id-connect-provider \
-  --url https://token.actions.githubusercontent.com \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
-```
-
-## Remote state (recommended)
-
-Before team use, enable the S3 backend in `environments/staging/main.tf`. Create the bucket and DynamoDB table first:
-
-```bash
-aws s3api create-bucket \
-  --bucket flowiq-terraform-state \
-  --region ap-southeast-2 \
-  --create-bucket-configuration LocationConstraint=ap-southeast-2
-
-aws s3api put-bucket-versioning \
-  --bucket flowiq-terraform-state \
-  --versioning-configuration Status=Enabled
-
-aws dynamodb create-table \
-  --table-name flowiq-terraform-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --region ap-southeast-2
-```
-
-Then uncomment the `backend "s3"` block in `environments/staging/main.tf` and run `terraform init -migrate-state`.
-
-## Architecture
-
-```
-Internet
-    │
-    ▼
-[ALB] (public subnets, HTTPS:443)
-    │  path-based routing
-    ├──/api/*──▶ [ECS: api]    (Node.js/Fastify, port 3000)
-    ├──/ai/*───▶ [ECS: ai-svc] (Python/FastAPI, port 8000)
-    └──default──▶ [ECS: web]   (Next.js, port 3001)
-                     │
-            [private subnets]
-                     │
-          ┌──────────┼──────────┐
-          ▼          ▼          ▼
-        [RDS]     [Redis]     [S3]
-      PostgreSQL  ElastiCache  Documents
-```
+</details>
